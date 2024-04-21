@@ -1,4 +1,4 @@
-# Pakistan Flood Exposure Web Application 🌊🇵🇰💧
+# Pakistan Flood Exposure Application 🌊🇵🇰💧
 ### Group project application built in Google Earth Engine for CASA0025
 
 View the app live 
