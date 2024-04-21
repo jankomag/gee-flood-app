@@ -1,0 +1,40 @@
+//////////// LOAD Admin boundaries and Google Open Buildings//////////////
+// Load the administrative boundaries and filter for Balochistan, Pakistan
+var adminBoundaries = ee.FeatureCollection('FAO/GAUL_SIMPLIFIED_500m/2015/level1');
+var aoi = adminBoundaries.filter(ee.Filter.eq('ADM1_NAME', 'Punjab'))
+//                                 .filter(ee.Filter.eq('ADM0_NAME', 'Pakistan'));
+                                 
+// var admin = ee.FeatureCollection("FAO/GAUL/2015/level1");
+// filter Da Nang Area
+// var aoi = admin.filter('ADM1_CODE == 3340');
+
+// Load the buildings dataset with a confidence threshold
+var buildings = ee.FeatureCollection('GOOGLE/Research/open-buildings/v3/polygons')
+    .filter(ee.Filter.gte('confidence', 0.75));
+
+// IMPORTANT: Ensure Balochistan geometry is defined for filtering buildings
+var buildingsInAOI = buildings.filterBounds(aoi.geometry());
+
+// Visualize Balochistan Boundary and Buildings
+// Style for the boundary of Balochistan
+var boundaryStyle = {
+  color: 'red',
+  fillColor: '00000000',  // '00000000' represents a fully transparent fill
+  width: 3
+};
+
+
+
+// Style for the buildings
+var buildingStyle = {
+  color: '000000',  // Black color
+  fillColor: '0000007F'  // Black fill with 50% opacity (7F is the hex for 127 in opacity scale 0-255)
+};
+
+//Map.addLayer(aoi, boundaryStyle, 'Balochistan Boundary');
+//Map.addLayer(buildingsInAOI, buildingStyle, 'Buildings in Balochistan');
+//Map.centerObject(aoi, 7); // Adjust zoom level as necessary
+//Map.setOptions('SATELLITE');
+
+
+exports.aoi = aoi;

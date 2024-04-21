@@ -1,0 +1,31 @@
+Map.setOptions("satellite");
+var aoi = require('users/geraezemc/buildingbigdataapp:globals').aoi;
+Map.centerObject(aoi, 7);
+
+var gfd = ee.ImageCollection('GLOBAL_FLOOD_DB/MODIS_EVENTS/V1');
+var cumulativeFlooded = gfd.select('flooded').sum();
+
+var jrc = gfd.select('jrc_perm_water').sum().gte(1);
+Map.addLayer(
+  jrc.selfMask(),
+  {min: 0, max:  1, opacity: 0.5, palette: ['00008B']},
+  'JRC Permanent Water');
+
+// Subtract permanent water from cumulative flooded areas
+var cumulativeFloodedAdjusted = cumulativeFlooded.where(jrc, 0);
+Map.addLayer(cumulativeFloodedAdjusted.selfMask(),
+  {min: 0, max: 7,  opacity: 0.3, palette: ['0000FF', '0040FF', '0080FF', '00BFFF', '00FFFF', '40FFBF', '80FF80', 'BFFF40', 'FFFF00', 'FFBF00', 'FF8000', 'FF4000', 'FF0000']},
+  'Cumulative Flooded Areas without Permanent Water');
+
+cumulativeFlooded = cumulativeFlooded.updateMask(cumulativeFlooded.gt(0));
+Map.addLayer(cumulativeFlooded.selfMask(),
+  {min: 0, max: 7,  opacity: 0.3, palette: ['0000FF', '0040FF', '0080FF', '00BFFF', '00FFFF', '40FFBF', '80FF80', 'BFFF40', 'FFFF00', 'FFBF00', 'FF8000', 'FF4000', 'FF0000']},
+  'Cumulative Flooded Areas');
+// Compute histogram for the cumulative flooded areas within the region of interest
+var histogram = ui.Chart.image.histogram({
+  image: cumulativeFlooded,
+  region: aoi,
+  scale: 1000, // Adjust the scale as needed
+  maxBuckets: 30 // Adjust the number of buckets as needed
+});
+print(histogram);

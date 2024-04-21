@@ -1,0 +1,83 @@
+var palettes = require('users/gena/packages:palettes');
+var globals = require('users/geraezemc/buildingbigdataapp:globals');
+var cumulativeFlooded = require('users/geraezemc/buildingbigdataapp:globals').cumulativeFlooded;
+var HRSL_30m = ee.ImageCollection("projects/sat-io/open-datasets/hrsl/hrslpop");
+var vis = require('users/geraezemc/buildingbigdataapp:vis-params');
+
+// function for population 
+function getHRSL(aoi) {
+  var HRSL_30m = ee.ImageCollection("projects/sat-io/open-datasets/hrsl/hrslpop");
+  var HRSL_clipped = HRSL_30m.filterBounds(aoi).mosaic();
+  var totalPopInAOI = HRSL_clipped.reduceRegion({
+    reducer: ee.Reducer.sum(),
+    geometry: aoi.geometry(),
+    scale: 30,
+    maxPixels: 1e13
+  }).get('b1'); 
+  return totalPopInAOI;
+}
+
+// Define the region
+var region1 = ee.FeatureCollection(globals.gaul_l1);
+
+// testing with Sindh
+var l1_name = "Sindh";
+
+// Function to create text with info for each region
+function createText(level, name) {
+  var region = "";
+  // Filter by name
+  if(level == 1){
+    region = globals.gaul_l1.filter(ee.Filter.eq("ADM1_NAME", name));
+  } else {
+    region = globals.gaul_l2.filter(ee.Filter.eq("ADM2_NAME", name));
+  }
+  
+  //// Population ////
+  // Load HRSL data for the selected region
+  var HRSL_general = HRSL_30m.mosaic().clip(region);
+  
+  // Calculate the total population 
+  
+  var HRSL_clipped = HRSL_30m.filterBounds(region).mosaic();
+  var totalPopInAOI = Math.round(getHRSL(region).getInfo());
+  // Get total population
+  // var totalPop = Math.round(populationByAgeBand.get("b1").getInfo());
+  
+
+///// Area /////
+  // Calculate area of the selected region
+  var areaSqMeters = region.geometry().area();
+  var areaSqKm = areaSqMeters.divide(1000000).round();
+  
+  
+  ///// Flooded Areaa /////
+  // Calculate area flooded
+  var floodedInfo = cumulativeFlooded.reduceRegion({
+    reducer: ee.Reducer.sum(),
+    geometry: region.geometry(),
+    scale: 30,
+    bestEffort: true
+  });
+  var areaFlooded = floodedInfo.get('flooded');
+  
+  // Calculate percentage of flooded area relative to total area
+  var percentageFlooded = ee.Number(areaFlooded).divide(areaSqMeters).multiply(100);
+  
+  // Convert percentageFlooded to a JavaScript number and format it with two decimal places
+  var percentageFloodedValue = percentageFlooded.getInfo();
+  var percentageFloodedString = percentageFloodedValue.toFixed(4);
+  
+/////// Construct text //////
+  
+  var text = "This is the " + name + " region. It has a total population of " + totalPopInAOI.toLocaleString() + " people and an area of "  + areaSqKm.getInfo() + " sq km." + " The flooded area is " + percentageFloodedString + "% of the total area.";
+  
+  var panel = ui.Label(text, vis.text_style.text);
+  
+  return panel;
+}
+
+// Usage example
+// print(createText(l1_name));
+
+exports.createText = createText;

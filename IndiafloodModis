@@ -1,0 +1,91 @@
+// Load the FAO GAUL dataset
+var gaul = ee.FeatureCollection("FAO/GAUL/2015/level0");
+
+// Define the list of South Asian countries
+var southAsianCountries = [
+  'India'
+];
+
+// Filter the GAUL dataset to include only the selected country
+var selectedCountryBoundary = gaul.filter(ee.Filter.inList('ADM0_NAME', southAsianCountries));
+
+// Display the selected country boundary on the map
+Map.addLayer(selectedCountryBoundary, {}, 'Selected Country');
+
+// Load the Global Flood Database (GFD)
+var gfd = ee.ImageCollection('GLOBAL_FLOOD_DB/MODIS_EVENTS/V1');
+
+// Filter the GFD ImageCollection based on specific conditions
+var startDate = '2000-01-01';
+var endDate = '2022-12-31';
+var selectedCountry = 'India';
+
+var filteredGFD = gfd.filter(ee.Filter.and(
+  ee.Filter.stringContains('countries', selectedCountry),
+  ee.Filter.date(startDate, endDate)
+));
+
+// Define color palette for flood duration
+var durationPalette = ['c3effe', '1341e8', '051cb0', '001133'];
+
+// Map all floods to generate the satellite-observed historical flood plain
+var gfdFloodedSum = filteredGFD.select('flooded').sum().clip(selectedCountryBoundary);
+Map.addLayer(gfdFloodedSum.selfMask(), {min: 0, max: 10, palette: durationPalette}, 'GFD Satellite Observed Flood Plain');
+
+// Overlay permanent water to distinguish flood water
+var jrc = filteredGFD.select('jrc_perm_water').sum().gte(1).clip(selectedCountryBoundary);
+Map.addLayer(jrc.selfMask(), {min: 0, max: 1, palette: 'C3EFFE'}, 'JRC Permanent Water');
+
+// Visualization
+Map.centerObject(selectedCountryBoundary, 5);
+
+// Function to display flood event information on the map
+var displayFloodEventInfo = function(feature) {
+  var id = feature.get('id');
+  var startDate = ee.Date(feature.get('system:time_start')).format('YYYY-MM-dd');
+  var endDate = ee.Date(feature.get('system:time_end')).format('YYYY-MM-dd');
+  var duration = ee.Date(feature.get('system:time_end')).difference(ee.Date(feature.get('system:time_start')), 'days');
+  
+  var geometry = ee.Geometry(feature.get('system:footprint'));
+  var layer = ui.Map.Layer(geometry, {color: 'FF0000'}, 'Flood Event ID: ' + id);
+  Map.layers().add(layer);
+  
+  var info = ui.Panel({
+    style: {
+      position: 'bottom-left',
+      padding: '8px 15px',
+      width: '350px'
+    }
+  });
+  
+  var titleTextVis = {
+    'margin': '0px 0px 15px 0px',
+    'fontSize': '18px',
+    'font-weight': '',
+    'color': '3333ff'
+  };
+  
+  var textVis = {
+    'margin': '0px 8px 2px 0px',
+    'fontWeight': 'bold'
+  };
+  
+  var title = ui.Label('Flood Event ID: ' + id, titleTextVis);
+  var startDateLabel = ui.Label('Start Date: ' + startDate, textVis);
+  var endDateLabel = ui.Label('End Date: ' + endDate, textVis);
+  var durationLabel = ui.Label('Duration: ' + duration.getInfo() + ' days', textVis);
+  
+  info.add(title);
+  info.add(startDateLabel);
+  info.add(endDateLabel);
+  info.add(durationLabel);
+  
+  Map.add(info);
+};
+
+// Iterate over the flood events and display information on the map
+filteredGFD.evaluate(function(features) {
+  features.features.forEach(function(feature) {
+    displayFloodEventInfo(ee.Feature(feature));
+  });
+});

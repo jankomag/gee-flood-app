@@ -1,0 +1,500 @@
+// Function to caclulate percentage of population of an area residing in flood
+function calcPopPerc(floodPolygon, aoiPolygon, populationFeature) {
+  // Calculate the total population in the flooded area
+  var floodedPopulation = populationFeature.reduceRegion({
+    reducer: ee.Reducer.sum(),
+    geometry: floodPolygon,
+    scale: 30,
+    maxPixels: 1e9
+  });
+  
+  // Calculate the total population in the AOI
+  var aoiPopulation = populationFeature.reduceRegion({
+    reducer: ee.Reducer.sum(),
+    geometry: aoiPolygon,
+    scale: 30,
+    maxPixels: 1e9
+  });
+
+  // Calculate the percentage of population in the flood polygon
+  var percentage = floodedPopulation.getNumber('b1').divide(aoiPopulation.getNumber('b1')).multiply(100);
+  return percentage;
+}
+
+var calcPopSum = function(floodCounter, aoi, HRSL, floodData) {
+  floodCounter = ee.Number(floodCounter);
+  var HRSL_clipped = HRSL.filterBounds(aoi).mosaic();
+  var cumulativeFlooded = floodData.selfMask().clip(aoi);
+
+  var floodedMask = cumulativeFlooded.eq(floodCounter);
+  var HRSL_clipped_flooded = HRSL_clipped.mask(floodedMask);
+
+  var populationSum = HRSL_clipped_flooded.reduceRegion({
+    reducer: ee.Reducer.sum(),
+    geometry: aoi.geometry(),
+    scale: 30,
+    maxPixels: 1e13
+  }).get('b1'); 
+  
+  var totalPopInAOI = HRSL_clipped.reduceRegion({
+    reducer: ee.Reducer.sum(),
+    geometry: aoi.geometry(),
+    scale: 30,
+    maxPixels: 1e13
+  }).get('b1'); 
+
+  // Create a feature with flood zone and population sum
+  var feature = ee.Feature(null, {
+    'flood_zone': floodCounter,
+    'population_sum': ee.Number(populationSum),
+  });
+  return feature;
+};
+
+// Define a function to calculate total population within a polygon from HRSL imagery
+function getHRSL(aoi) {
+  var HRSL_30m = ee.ImageCollection("projects/sat-io/open-datasets/hrsl/hrslpop");
+  var HRSL_clipped = HRSL_30m.filterBounds(aoi).mosaic();
+  var totalPopInAOI = HRSL_clipped.reduceRegion({
+    reducer: ee.Reducer.sum(),
+    geometry: aoi.geometry(),
+    scale: 30,
+    maxPixels: 1e13
+  }).get('b1'); 
+  return totalPopInAOI;
+}
+
+
+var calculateMeanVulnerability = function(aoi, vulnerabilityIndex) {
+  var meanVulnerability = vulnerabilityIndex.reduceRegion({
+    reducer: ee.Reducer.mean(),
+    geometry: aoi.geometry(),
+    scale: 30,
+    maxPixels: 1e9
+  });
+  
+  var meanValue = meanVulnerability.get('b1');
+  
+  var feature = ee.Feature(aoi)
+                  .set('mean_vulnerability_index', meanValue);
+  return feature;
+  
+};
+
+// Function to chart the mean vulnerability index for a given AOI
+var vulnerability_index_chart = function(aoi) {
+  var l2_list = aoi.aggregate_array('ADM2_NAME').distinct().getInfo().sort();
+  var l2_name = l2_list[0];
+
+  var result = ee.FeatureCollection(l2_list.map(function(l2_name) {
+    var roi = aoi.filter(ee.Filter.eq('ADM2_NAME', l2_name)).first();
+    var feature = calculateMeanVulnerability(roi, vulnerabilityIndex);
+    return feature;
+    
+  }));
+  
+  var sortedResult = result.sort('mean_vulnerability_index', false);
+  var top10Result = sortedResult.limit(10);
+
+  var chart = ui.Chart.feature.byFeature(top10Result, 'ADM2_NAME', 'mean_vulnerability_index')
+              .setChartType('ColumnChart')
+              .setOptions({
+                title: 'Mean Vulnerability Index per sub-region',
+                hAxis: {title: 'Region (l2)', slantedText: true, slantedTextAngle: 45},
+                vAxis: {title: 'Mean Vulnerability Index'},
+                legend: {position: 'none'},
+                height: 300,
+                width: 1000
+              });
+  return chart;
+};
+
+var landuseStats = function(region, widgetPanel, widgetIndex) {
+  
+  //Classes
+  var CLASS_NAMES = [
+    'water', 'trees', 'grass', 'flooded_vegetation', 'crops',
+    'shrub_and_scrub', 'built', 'bare', 'snow_and_ice'
+  ];
+  
+  //Landuse Calculations
+  // Set the date range for a specific month
+  var START = ee.Date('2022-02-01');
+  var END = START.advance(12, 'week');
+  
+  var colFilter = ee.Filter.and(
+    ee.Filter.bounds(region),
+    ee.Filter.date(START, END)
+  );
+  
+  // Load and filter the Dynamic World collection
+  var dwCol = ee.ImageCollection('GOOGLE/DYNAMICWORLD/V1')
+    .filter(colFilter)
+    .select('label');
+  
+  // Load and filter the Sentinel-2 collection
+  var s2Col = ee.ImageCollection('COPERNICUS/S2')
+    .filter(colFilter);
+  
+  // Calculate the average Dynamic World labels over the month
+  var dwAvg = dwCol.reduce(ee.Reducer.mode()).clip(region);
+  
+  // Create a visualization of the average Dynamic World labels
+  var VIS_PALETTE = [
+    '263247', '397d49', '88b053', '7a87c6', 'e49635', 'dfc35a', 'c4281b',
+    'a59b8f', 'b39fe1'
+  ];
+  
+  var dwAvgVis = dwAvg.visualize({
+    min: 0,
+    max: 8,
+    palette: VIS_PALETTE
+  });
+  
+  // Calculate the median Sentinel-2 image over the month
+  var s2Median = s2Col.median();
+
+    Map.addLayer(s2Median.clip(region), {min: 0, max: 3000, bands: ['B4', 'B3', 'B2'], scale: 100}, 'Sentinel-2 Median');
+    var dwAvgVisAoi = dwAvgVis.clip(region)
+    Map.addLayer(dwAvgVisAoi, {scale: 100, opacity:0.7}, 'Dynamic World Average Labels');
+    
+  //Create 'landuseData'
+  var landuseData = dwAvg;
+  
+  //Calculate total region size
+  var areaImage = landuseData.mask(landuseData).multiply(ee.Image.pixelArea());
+  
+  //Get flooded areas
+  var UI_functions = require('users/geraezemc/buildingbigdataapp:UI-functions');
+  var globals = require('users/geraezemc/buildingbigdataapp:globals');
+  var region_flooded = UI_functions.getFloodedInAoi(region, globals.cumulativeFlooded);
+    
+  // Reduce the image to get the total area
+  var totalArea = areaImage.reduceRegion({
+    reducer: ee.Reducer.count(),
+    geometry: region,
+    scale: 300,
+    maxPixels: 1e9
+  });
+  
+  // Reduce the image to get the total area
+  var totalAreaFlood = areaImage.reduceRegion({
+    reducer: ee.Reducer.count(),
+    geometry: region_flooded,
+    scale: 300,
+    maxPixels: 1e9
+  });
+    
+  var totalAreasqkm;
+  var totalAreasqkmFlood;
+      
+  totalArea.evaluate(function(result){
+    var pixelArea = result.label_mode;
+    totalAreasqkm = pixelArea * (300 * 300 / 1000000);
+      
+    //Init dictionaries
+    var areaPerClass = {};
+    var pctPerClass = {};
+    
+    // Counter to track completed promises
+    var completedCount = 0;
+    
+    // Iterate over each class name
+    for (var i = 0; i < CLASS_NAMES.length; i++) {
+      // Create a promise for each class count
+      (function(index) {
+        var filteredLandUseData = landuseData.updateMask(landuseData.eq(index));
+  
+        var classCount = filteredLandUseData.reduceRegion({
+          reducer: ee.Reducer.count(),
+          geometry: region,
+          scale: 300,
+          maxPixels: 1e9
+        });
+  
+        classCount.evaluate(function(result) {
+          // Get the count of pixels for the current class
+          var pixelCount = result.label_mode;
+  
+          //Get square kilometres area
+          var pixelArea = pixelCount * (300 * 300 / 1000000);
+          areaPerClass[CLASS_NAMES[index]] = pixelArea;
+          pctPerClass[CLASS_NAMES[index]] = 100 * pixelArea / totalAreasqkm;
+  
+          // Increment the completed count
+          completedCount++;
+          
+          //Generate chart       
+          if (completedCount === CLASS_NAMES.length) {
+            
+            var LAND_COVER_COLORS = {
+              'water': '#263247',
+              'trees': '#397d49',
+              'grass': '#88b053',
+              'flooded vegetation': '#7a87c6',
+              'cropland': '#e49635',
+              'shrubs': '#dfc35a',
+              'built land': '#c4281b',
+              'bare land': '#a59b8f',
+              'snow and ice': '#b39fe1'
+            };
+            
+            var treePct = pctPerClass.trees
+            var waterPct = pctPerClass.water
+            var floodVegPct = pctPerClass.flooded_vegetation
+            var shrubPct = pctPerClass.shrub_and_scrub
+            var grassPct = pctPerClass.grass
+            var builtPct = pctPerClass.built
+            var snowPct = pctPerClass.snow_and_ice
+            var cropsPct = pctPerClass.crops
+            var barePct = pctPerClass.bare
+            
+            //Areas
+            var treeArea = areaPerClass.trees
+            var waterArea = areaPerClass.water
+            var floodVegArea = areaPerClass.flooded_vegetation
+            var shrubArea = areaPerClass.shrub_and_scrub
+            var grassArea = areaPerClass.grass
+            var builtArea = areaPerClass.built
+            var snowArea = areaPerClass.snow_and_ice
+            var cropsArea = areaPerClass.crops
+            var bareArea = areaPerClass.bare
+
+            
+            var chartData = [
+              { percentage: treePct, area: treeArea, label: 'Trees' },
+              { percentage: waterPct, area: waterArea, label: 'Water' },
+              { percentage: floodVegPct, area: floodVegArea, label: 'Flooded Vegetation' },
+              { percentage: shrubPct, area: shrubArea, label: 'Shrubs' },
+              { percentage: grassPct, area: grassArea, label: 'Grass' },
+              { percentage: builtPct, area: builtArea, label: 'Built Land' },
+              { percentage: snowPct, area: snowArea, label: 'Snow and Ice' },
+              { percentage: cropsPct, area: cropsArea, label: 'Cropland' },
+              { percentage: barePct, area: bareArea, label: 'Bare Land' }
+            ].sort(function(a, b) {
+              return b.percentage - a.percentage; // Sorting by population in descending order
+            });
+            
+            //Filter to only categories with over 1%
+            var filteredChartData = chartData.filter(function(data) {
+              return data.percentage > 1;
+            });
+            
+            // Assign colors to each bar based on the land cover class names
+            var dataTable = [['Land Cover', 'Percentage', {role: 'style'}, {role: 'annotation'}, {role: 'tooltip', type: 'string', p: {html: true}}]];
+            filteredChartData.forEach(function(data) {
+              var color = LAND_COVER_COLORS[data.label.toLowerCase()];
+              var annotation = data.percentage.toFixed(1) + '%'; // Use percentage as annotation
+              var tooltipContent = '<div style="padding:5px 5px 5px 5px;">' +
+                                   '<strong>Age Band:</strong> ' + data.label + '<br/>' +
+                                   '<strong>Percentage:</strong> ' + data.percentage.toFixed(1) + '%' + '<br/>' +
+                                   '<strong>Area:</strong> ' + data.area.toFixed(1) + '</div>';
+              dataTable.push([data.label, data.percentage, color, annotation, tooltipContent]);
+            });
+            
+            var title = 'Land Cover Breakdown in Region (All Classes >1%)'
+            
+            // Set up the chart options.
+            var chart = ui.Chart(dataTable)
+              .setChartType('ColumnChart')
+              .setOptions({
+                title: title,
+                hAxis: {
+                  title: 'Land Cover Type',
+                  textStyle: { fontSize: 10 },
+                  showTextEvery: 1
+                },
+                vAxis: {
+                  title: 'Percentage',
+                  format: 'percent',
+                  viewWindow: { min: 0 },
+                  gridlines: { count: -1 }
+                },
+                legend: { position: 'none' },
+                bar: { groupWidth: '75%' },
+                chartArea: { width: '150%', height: '70%' },
+                annotations: { alwaysOutside: true },
+                tooltip: { isHtml: true } // Ensure tooltips are displayed as HTML
+              });
+
+            var text_region = 'This district is comprised primarily of ' + chartData[0].label + ' at ' + chartData[0].percentage.toFixed(1) + '% of the total land, which amounts to ' + chartData[0].area.toFixed(1) + ' square kilometres. ' + 'This is followed by ' + chartData[1].label + ' at ' + chartData[1].percentage.toFixed(1) + '% (' + chartData[1].area.toFixed(1) + ' square kilometres).'
+
+            var panel = ui.Panel({
+              widgets: [
+                chart,
+                ui.Label(text_region, {margin: '10px 0px'}),
+              ],
+              style: {
+                position: "top-right",
+                maxWidth: '500px' 
+              },
+            });
+
+            // Add the panel to the map
+            widgetPanel.widgets().set(widgetIndex, panel);
+            
+          }
+        });
+      })(i);
+    }
+  });
+  
+  totalAreaFlood.evaluate(function(result){
+    var pixelArea = result.label_mode;
+    totalAreasqkmFlood = pixelArea * (300 * 300 / 1000000);
+      
+    //Init dictionaries
+    var areaPerClass = {};
+    var pctPerClass = {};
+    
+    // Counter to track completed promises
+    var completedCount = 0;
+    
+    // Iterate over each class name
+    for (var i = 0; i < CLASS_NAMES.length; i++) {
+      // Create a promise for each class count
+      (function(index) {
+        var filteredLandUseData = landuseData.updateMask(landuseData.eq(index));
+  
+        var classCount = filteredLandUseData.reduceRegion({
+          reducer: ee.Reducer.count(),
+          geometry: region_flooded,
+          scale: 300,
+          maxPixels: 1e9
+        });
+  
+        classCount.evaluate(function(result) {
+          // Get the count of pixels for the current class
+          var pixelCount = result.label_mode;
+  
+          //Get square kilometres area
+          var pixelArea = pixelCount * (300 * 300 / 1000000);
+          areaPerClass[CLASS_NAMES[index]] = pixelArea;
+          pctPerClass[CLASS_NAMES[index]] = 100 * pixelArea / totalAreasqkmFlood;
+
+          // Increment the completed count
+          completedCount++;
+          
+          //Generate chart       
+          if (completedCount === CLASS_NAMES.length) {
+            
+            var LAND_COVER_COLORS = {
+              'water': '#263247',
+              'trees': '#397d49',
+              'grass': '#88b053',
+              'flooded vegetation': '#7a87c6',
+              'cropland': '#e49635',
+              'shrubs': '#dfc35a',
+              'built land': '#c4281b',
+              'bare land': '#a59b8f',
+              'snow and ice': '#b39fe1'
+            };
+            
+            var treePct = pctPerClass.trees
+            var waterPct = pctPerClass.water
+            var floodVegPct = pctPerClass.flooded_vegetation
+            var shrubPct = pctPerClass.shrub_and_scrub
+            var grassPct = pctPerClass.grass
+            var builtPct = pctPerClass.built
+            var snowPct = pctPerClass.snow_and_ice
+            var cropsPct = pctPerClass.crops
+            var barePct = pctPerClass.bare
+            
+            //Areas
+            var treeArea = areaPerClass.trees
+            var waterArea = areaPerClass.water
+            var floodVegArea = areaPerClass.flooded_vegetation
+            var shrubArea = areaPerClass.shrub_and_scrub
+            var grassArea = areaPerClass.grass
+            var builtArea = areaPerClass.built
+            var snowArea = areaPerClass.snow_and_ice
+            var cropsArea = areaPerClass.crops
+            var bareArea = areaPerClass.bare
+
+            
+            var chartData = [
+              { percentage: treePct, area: treeArea, label: 'Trees' },
+              { percentage: waterPct, area: waterArea, label: 'Water' },
+              { percentage: floodVegPct, area: floodVegArea, label: 'Flooded Vegetation' },
+              { percentage: shrubPct, area: shrubArea, label: 'Shrubs' },
+              { percentage: grassPct, area: grassArea, label: 'Grass' },
+              { percentage: builtPct, area: builtArea, label: 'Built Land' },
+              { percentage: snowPct, area: snowArea, label: 'Snow and Ice' },
+              { percentage: cropsPct, area: cropsArea, label: 'Cropland' },
+              { percentage: barePct, area: bareArea, label: 'Bare Land' }
+            ].sort(function(a, b) {
+              return b.percentage - a.percentage; // Sorting by population in descending order
+            });
+            
+            //Filter to only categories with over 1%
+            var filteredChartData = chartData.filter(function(data) {
+              return data.percentage > 1;
+            });
+            
+            // Assign colors to each bar based on the land cover class names
+            var dataTable = [['Land Cover', 'Percentage', {role: 'style'}, {role: 'annotation'}, {role: 'tooltip', type: 'string', p: {html: true}}]];
+            filteredChartData.forEach(function(data) {
+              var color = LAND_COVER_COLORS[data.label.toLowerCase()];
+              var annotation = data.percentage.toFixed(1) + '%'; // Use percentage as annotation
+              var tooltipContent = '<div style="padding:5px 5px 5px 5px;">' +
+                                   '<strong>Age Band:</strong> ' + data.label + '<br/>' +
+                                   '<strong>Percentage:</strong> ' + data.percentage.toFixed(1) + '%' + '<br/>' +
+                                   '<strong>Area:</strong> ' + data.area.toFixed(1) + '</div>';
+              dataTable.push([data.label, data.percentage, color, annotation, tooltipContent]);
+            });
+
+            
+            // Set up the chart options.
+            var chart = ui.Chart(dataTable)
+              .setChartType('ColumnChart')
+              .setOptions({
+                title:  'Land Cover Breakdown in Flooded Areas (All Classes >1%)',
+                hAxis: {
+                  title: 'Land Cover Type',
+                  textStyle: { fontSize: 10 },
+                  showTextEvery: 1
+                },
+                vAxis: {
+                  title: 'Percentage',
+                  format: 'percent',
+                  viewWindow: { min: 0 },
+                  gridlines: { count: -1 }
+                },
+                legend: { position: 'none' },
+                bar: { groupWidth: '75%' },
+                chartArea: { width: '150%', height: '70%' },
+                annotations: { alwaysOutside: true },
+                tooltip: { isHtml: true } // Ensure tooltips are displayed as HTML
+              });
+            
+            var text_region = 'This area flooded in this district is comprised primarily of ' + chartData[0].label + ' at ' + chartData[0].percentage.toFixed(1) + '% of the historically flooded land, which amounts to ' + chartData[0].area.toFixed(1) + ' square kilometres. ' + 'This is followed by ' + chartData[1].label + ' at ' + chartData[1].percentage.toFixed(1) + '% (' + chartData[1].area.toFixed(1) + ' square kilometres).'
+
+            var panel = ui.Panel({
+              widgets: [
+                chart,
+                ui.Label(text_region, {margin: '10px 0px'}),
+              ],
+              style: {
+                position: "top-right",
+                // width: '500px' 
+              },
+            });
+
+            // Add the panel to the map
+            widgetPanel.widgets().set(widgetIndex + 1, panel);
+            
+          }
+        });
+      })(i);
+    }
+  });
+  
+}
+
+
+exports.calculateMeanVulnerability = calculateMeanVulnerability;
+exports.vulnerability_index_chart = vulnerability_index_chart;
+exports.calcPopSum = calcPopSum;
+exports.calcPopPerc = calcPopPerc;
+exports.landuseStats = landuseStats;
+

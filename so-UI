@@ -1,0 +1,517 @@
+// --------------- load dependencies ---------------
+var functions = require('users/geraezemc/buildingbigdataapp:functions');
+var calcPopSum = functions.calcPopSum;
+var cumulativeFlooded = require('users/geraezemc/buildingbigdataapp:globals').cumulativeFlooded;
+
+var HRSL_general = ee.ImageCollection("projects/sat-io/open-datasets/hrsl/hrslpop");
+
+var UI_functions = require('users/geraezemc/buildingbigdataapp:UI-functions');
+var vis = require('users/geraezemc/buildingbigdataapp:vis-params');
+
+// --------------- datasets ---------------
+
+// load Global Flood Database
+// https://developers.google.com/earth-engine/datasets/catalog/GLOBAL_FLOOD_DB_MODIS_EVENTS_V1
+var gfd = ee.ImageCollection('GLOBAL_FLOOD_DB/MODIS_EVENTS/V1');
+// print(gfd, 'Global Flood Database');
+
+// load flood data
+var flood_events = ee.FeatureCollection("projects/sat-io/open-datasets/events/large_flood_events_1985-2016");
+// print(flood_events, 'Flood Events');
+// start and end years
+var start_year = 1985;
+var end_year = 2016;
+
+// get boundary data for countries
+var gaul_l1 = ee.FeatureCollection("FAO/GAUL/2015/level1");
+var gaul_l2 = ee.FeatureCollection("FAO/GAUL/2015/level2");
+// Map.addLayer(gaul_l1);
+// Map.addLayer(gaul_l2);
+
+// load world pop data
+// https://developers.google.com/earth-engine/datasets/catalog/WorldPop_GP_100m_pop
+var world_pop = ee.ImageCollection('WorldPop/GP/100m/pop')
+  .filter(ee.Filter.eq('year', 2020));
+
+// ----- visualisation parameters -----
+
+// import settings from imported stuff
+var colors = vis.colors;
+var palette = vis.palette;
+var title_text_style = vis.text_style.title;
+var bold_text_style = vis.text_style.bold;
+var text_style = vis.text_style.text;
+var small_text_style = vis.text_style.small;
+var fill_only = vis.fill_only;
+
+// ----- select countries -----
+
+// get list of countries
+var country_list = gaul_l1.aggregate_array('ADM0_NAME').distinct().getInfo().sort();
+
+// set country to Pakistan
+var country_name = 'Pakistan';
+var country_of_interest = gaul_l1.filter(ee.Filter.eq('ADM0_NAME', country_name));
+
+// set list of l1 in country
+var l1_list = country_of_interest.aggregate_array('ADM1_NAME').distinct().getInfo().sort();
+
+// set default l1 to Sindh
+var l1_name = 'Sindh';
+
+// extract the l2 in l1
+var l1_of_interest = gaul_l2.filter(ee.Filter.eq('ADM1_NAME', l1_name));
+var l2_list = l1_of_interest.aggregate_array('ADM2_NAME').distinct().getInfo().sort();
+
+// set default l2 value
+var l2_name = l2_list[0];
+
+// extract dataset
+var gfd_country = gfd.filter(ee.Filter.stringContains('countries', country_name));
+
+// ---------- analysis code ----------
+
+// set zoom-in state
+var zoom_flag = false;
+
+// choices of field of analysis
+var criterias = ['Population', 'Built-up Area', 'Crop Area'];
+// default to population
+var criteria_chosen = criterias[0];
+
+// function that runs the analysis on l1 level
+// called when area of interest is selected
+function l1_analysis(l1_name, criteria){
+  
+  // update selection for l2 area
+  update_l2_selection(l1_name);
+  
+  // visualise on map
+  Map.clear();
+  Map.centerObject(l1_of_interest);
+  add_gfd_map();
+  Map.addLayer(l1_of_interest.style(fill_only(colors.base + '33')), {}, 'Map of '+ l1_name + ' region');
+  
+  // change the analysis, depending on the criteria chosen
+  
+  // empty placeholder to begin with
+  var chart = ui.Label();
+  
+  switch(criteria){
+    // population
+    case criterias[0]:
+      // calculate population
+      // Generate flood risk zones list
+      chart = pop_sum_by_flood(l1_of_interest);
+      break;
+    
+    // built up area
+    case criterias[1]:
+
+      break;
+    
+    // crop area
+    case criterias[2]:
+      
+      break;
+  }
+  
+  // update on summary of area
+  left_panel.widgets().set(7, chart);
+}
+
+// function that runs the analysis on l2 level
+// called when area of interest is selected
+function l2_analysis(l2_name, criteria){
+
+  var l2_of_interest = gaul_l2.filter(ee.Filter.eq('ADM2_NAME', l2_name));
+
+  // visualise on map
+  Map.clear();
+  Map.centerObject(l2_of_interest);
+  add_gfd_map();
+  Map.addLayer(l1_of_interest.style(fill_only(colors.base + '33')), {}, 'Map of ' + l1_name + ' region');
+  Map.addLayer(l2_of_interest.style(fill_only(colors.accent + '66')), {}, l2_name + ' subregion');
+
+  // change the analysis, depending on the criteria chosen
+  
+  // empty placeholder to begin with
+  var chart = ui.Label();
+  
+  switch(criteria){
+    // population
+    case criterias[0]:
+        // calculate population
+        // Generate flood risk zones list
+        chart = pop_sum_by_flood(l2_of_interest);
+      break;
+    
+    // built up area
+    case criterias[1]:
+
+      break;
+    
+    // crop area
+    case criterias[2]:
+      
+      break;
+  }
+  // update on summary of area
+  right_panel.widgets().set(2, chart);  
+}
+
+// create l2 selection window function
+function update_l2_selection(l1_name){
+  l1_of_interest = gaul_l2.filter(ee.Filter.eq('ADM1_NAME', l1_name));
+  l2_list = l1_of_interest.aggregate_array('ADM2_NAME').distinct().getInfo().sort();
+  l2_name = l2_list[0];
+  
+  // select subregion from dropdown of L2
+  var select_l2 = ui.Select({
+    items: l2_list,
+    value: l2_list[0], // default value,
+    onChange: function(selectedValue){
+      l2_name = selectedValue;
+      l2_analysis(l2_name, criteria_chosen);
+    }
+  });
+  
+  // title for panel
+  var select_l2_title = ui.Label(
+    "Analysis of regions in " + l1_name, 
+    title_text_style
+  );
+  
+  // some explanatory text
+  var select_l2_text = ui.Label(
+    "Select subregion within " + l1_name + " to view more detailed analysis.",
+    text_style
+  );
+  
+  // make panel
+  var select_l2_panel = ui.Panel({
+    widgets: [select_l2_title, select_l2_text, select_l2],
+    layout: ui.Panel.Layout.flow("vertical", true)
+  });
+  
+  // update selection tool to the correct position
+  right_panel.widgets().set(0, select_l2_panel);
+}
+
+// ----- helper functions for analysis -----
+
+// define function to cast string to date
+function cast_str_to_dates(feature){
+  // get the date strings
+  var begin_date = feature.get('BEGAN');
+  var end_date = feature.get('ENDED');
+  
+  // convert to date
+  var begin_converted = ee.Date.parse('M/d/yyyy', begin_date);
+
+  var end_converted = ee.Date.parse('M/d/yyyy', end_date);
+  
+  // get year
+  var year_of_event = begin_converted.get('year');
+  
+  // return to original dataframe
+  return feature
+    .set('BEGAN', begin_converted)
+    .set('ENDED', end_converted)
+    .set('YEAR', year_of_event);
+}
+
+// ----- code for graph making -----
+
+function pop_sum_by_flood(aoi){
+  // calculate population
+  // Generate flood risk zones list
+  var floodRiskZones = ee.List.sequence(0, 5);
+  var features = floodRiskZones.map(function(zone) {
+    return calcPopSum(zone, aoi, HRSL_general, cumulativeFlooded);
+  });
+  print(features);
+
+  // Create a chart with flood zone on the x-axis and population sum on the y-axis
+  var pop_chart = ui.Chart.feature.byFeature(features)
+    .setChartType('LineChart')
+    .setOptions({
+      title: 'Population Sum by Flood Zone',
+      hAxis: {
+        title: 'Flood Zone',
+        minValue: 1
+      },
+      vAxis: {title: 'Population Sum'}
+    });
+  
+  return pop_chart;
+}
+
+// --------------- create UI ---------------
+
+// create colorbar
+function create_colorbar(title, max_value, min_value){
+  // round min and max values to the nearest integer, and make sure
+  // the value in the middle is a whole number 
+  min_value = Math.floor(min_value);
+  max_value = Math.ceil(max_value);
+  if ((max_value + min_value) % 2 !== 0){
+    max_value += 1;
+  }
+  // colorbar
+  var colorbar = ui.Thumbnail({
+    image: ee.Image.pixelLonLat().select(0),
+    params: {
+      bbox: [0, 0, 1, 0.1],
+      dimensions: '100x10',
+      format: 'png',
+      min: 0,
+      max: 1,
+      palette: palette,
+    },
+    style: {stretch: 'horizontal', margin: '0px 8px', maxHeight: '24px'},
+  });
+  
+  // get text style
+  // style for points
+  var style = {};
+  // copy original text style
+  for (var key in text_style){
+    if(text_style.hasOwnProperty(key)){
+      style[key] = text_style[key];
+
+    }
+  }
+  style.stretch = 'horizontal'; // horizontal stretch
+  style.textAlign = 'center'; // align center  
+  
+  // colorbar labels
+  var colorbar_labels = ui.Panel({
+    widgets: [
+      ui.Label(min_value, text_style),
+      ui.Label((max_value + min_value) / 2, style),
+      ui.Label(max_value, text_style)
+    ],
+    layout: ui.Panel.Layout.flow('horizontal')
+  });
+  
+  // colorbar panel
+  var colorbar_panel = ui.Panel({
+    widgets: [
+      ui.Label(title, bold_text_style),
+      colorbar,
+      colorbar_labels,
+    ],
+    style: 
+    {
+      position: 'bottom-left',
+      padding: '8px',
+    }
+  });
+  
+  // return colorbar panel
+  return colorbar_panel;
+}
+
+// add GFD to map
+function add_gfd_map(){
+  // get max value
+  var max_value = cumulativeFlooded
+    .reduceRegion(ee.Reducer.max(), country_of_interest)
+    .get('flooded').getInfo();
+  print(max_value);
+  
+  // create colorbar
+  var flood_colorbar = create_colorbar('Number of Times Flooded', max_value, 0);
+  
+  // add to map
+  Map.addLayer(
+    cumulativeFlooded,
+    {
+      min: 0,
+      max: max_value,
+      palette: palette,
+      opacity: 0.8,
+    },
+    'Global Flood Database'
+  );
+  
+  // add legend
+  Map.add(flood_colorbar);
+}
+
+// ----- left panel -----
+
+// select region from dropdown of L1
+var select_l1 = ui.Select({
+  items: l1_list,
+  value: 'Sindh', // default value,
+  onChange: function(selectedValue){
+    l1_name = selectedValue;
+    // update first panel
+    l1_analysis(l1_name, criteria_chosen);
+    // update the second panel as well if zoomed in
+    if(zoom_flag){
+      l2_analysis(l2_name, criteria_chosen);
+    }
+  }
+});
+
+// panel for selecting area
+var select_area = ui.Panel({
+  widgets: [
+    ui.Label("Select area of interest:", bold_text_style),
+    select_l1,
+  ],
+  layout: ui.Panel.Layout.flow("horizontal", true),
+});
+
+// function to choose criteria
+
+var select_l1_analysis_criteria = ui.Panel({
+  widgets: [
+    // title
+    ui.Label('Select the Criteria to Analyze', bold_text_style),
+    // explanation
+    ui.Label(
+      "Select the perspective you wish to explore: threat to human lives, impact on economy, or damage to agriculture.",
+      text_style
+    ),
+    
+    // dropdown menu
+    ui.Select({
+      items: criterias,
+      value: criterias[0],
+      onChange: function(selectedValue){
+        criteria_chosen = selectedValue;
+        l1_analysis(l1_name, criteria_chosen);
+        if(zoom_flag){
+          l2_analysis(l2_name, criteria_chosen);
+        }
+      }
+    }),
+  ],
+  layout: ui.Panel.Layout.flow("vertical", true),
+});
+
+// button to deep dive into sub-region
+var zoom_in_button = ui.Button({
+  label: "Zoom into sub-region",
+  onClick: function(){
+    // update flag
+    zoom_flag = true;
+    // add panel
+    ui.root.add(right_panel);
+    // replace button
+    left_panel.widgets().set(10, zoom_out_button);
+    
+    // reset the right panel
+    update_l2_selection(l1_name);
+    l2_analysis(l2_name, criteria_chosen);
+  }
+});
+
+// button to zoom out
+var zoom_out_button = ui.Button({
+  label: "Zoom out to region",
+  onClick: function(){
+    // update flag
+    zoom_flag = false;
+    // remove panel
+    ui.root.remove(right_panel);
+    // replace button
+    left_panel.widgets().set(10, zoom_in_button);
+    // run analysis
+    l1_analysis(l1_name, criteria_chosen);
+  }  
+});
+
+// add panel to left of screen
+var left_panel = ui.Panel({
+  widgets: [
+    // title
+    ui.Label(
+     "Flood Events in Pakistan",
+      title_text_style
+    ),
+    // header text
+    ui.Label(
+      "This application explores the potential exposure to flood risk in Pakistan. Assuming areas flooded in the past have a higher risk of flooding, this app identifies which areas are more prone to flooding from the perspectives of population, economic activity, and agriculture.",
+      text_style
+    ),
+    
+    // frequency graph
+    UI_functions.frequency_graph(gfd_country, 'Pakistan', [colors.accent]),
+    
+    // data source
+    ui.Label(
+      "Data source: Dartmouth Flood Observatory (https://gee-community-catalog.org/projects/flood/)",
+      small_text_style
+    ),
+    
+    // Analysis to look into
+    select_l1_analysis_criteria,
+    
+    // country select
+    select_area,
+    
+    ui.Label(
+      "Summary of Area",
+      bold_text_style
+    ),
+
+    // placeholder for the analysis
+    // updated in different function
+    ui.Label("The charts come here using left_panel.widgets().set(7, __ui__);"),
+    
+    // comparison within subregions
+    ui.Label(
+      "Comparison of subregions within this area",
+      bold_text_style
+    ),
+
+    // updated in different function
+    ui.Label("The charts come here using left_panel.widgets().set(9, __ui__);"),
+    
+    // button to dive into the second level
+    zoom_in_button,
+  ],
+
+  style: {
+    maxWidth: "400px"
+  },
+  layout: ui.Panel.Layout.flow("vertical", true),
+});
+
+// ----- right panel -----
+
+// add panel to right of screen
+var right_panel = ui.Panel({
+  widgets: [
+    // placeholder for L2 selection
+    ui.Label(),
+    
+    // name for summary
+    ui.Label("Summary of " + l2_name, bold_text_style),
+    
+    // placeholder for charts
+    ui.Label("The charts come here using right_panel.widgets().set(2, __ui__);"),
+    
+  ],
+  style: {
+    maxWidth: "400px",
+  },
+  layout: ui.Panel.Layout.flow("vertical", true),
+});
+
+// ----- create the UI -----
+
+// insert panels to the left and right
+ui.root.insert(0, left_panel);
+// ui.root.add(right_panel);
+
+// --------------- initialisation ---------------
+
+// default
+l1_analysis(l1_name, criteria_chosen);
+

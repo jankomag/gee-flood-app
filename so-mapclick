@@ -1,0 +1,22 @@
+// ---------- load dependencies ----------
+
+var globals = require('users/geraezemc/buildingbigdataapp:globals');
+
+// onclick function
+function selectL1RegionOnClick(coords){
+  // get regions
+  var regions = globals.gaul_l1;
+  // print(regions.union().first());
+  // get point clicked
+  var point = ee.Geometry.Point(coords.lon, coords.lat);
+
+  // get clicked area
+  var selected_area = regions.filterBounds(point);
+
+  if(selected_area.size().getInfo() > 0){
+    var area_name = selected_area.first().get('ADM1_NAME');
+    print(area_name);
+  }
+}
+
+Map.onClick(selectL1RegionOnClick);

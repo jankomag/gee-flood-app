@@ -1,0 +1,180 @@
+// load database - not required for anything outside
+
+// set country
+var country_name = 'Pakistan';
+
+// load events
+var gfd = ee.ImageCollection('GLOBAL_FLOOD_DB/MODIS_EVENTS/V1')
+  .filter(ee.Filter.stringContains('countries', country_name));
+
+// ----- load dependencies -----
+
+var globals = require('users/geraezemc/buildingbigdataapp:globals');
+var vis = require('users/geraezemc/buildingbigdataapp:vis-params');
+
+// ----- Flood area -----
+
+// extract the flooded area within aoi
+function getFloodedInAoi(aoi, gfd){
+  var aoi_flooded = gfd.clip(aoi);
+  var mask = aoi_flooded.select('flooded').gt(0);
+  var aoi_flooded_masked = aoi_flooded
+    .updateMask(mask)
+    .reduceToVectors({
+      geometry: aoi,
+      scale: 30,
+      bestEffort: true,
+      geometryType: 'polygon',
+      // reducer: ee.Reducer.mean()
+    });
+  return aoi_flooded_masked;
+}
+
+// ----- UI functions -----
+
+// create colorbar - used in the add_gfd_map() function
+function createColorbar(title, max_value, min_value, palette){
+  // round min and max values to the nearest integer, and make sure
+  // the value in the middle is a whole number 
+  min_value = Math.floor(min_value);
+  max_value = Math.ceil(max_value);
+  if ((max_value + min_value) % 2 !== 0){
+    max_value += 1;
+  }
+  // colorbar
+  var colorbar = ui.Thumbnail({
+    image: ee.Image.pixelLonLat().select(0),
+    params: {
+      bbox: [0, 0, 1, 0.1],
+      dimensions: '100x10',
+      format: 'png',
+      min: 0,
+      max: 1,
+      palette: palette,
+    },
+    style: {stretch: 'horizontal', margin: '0px 8px', maxHeight: '24px'},
+  });
+  
+  // get text style
+  // style for points
+  var style = {};
+  // copy original text style
+  for (var key in vis.text_style.text){
+    if(vis.text_style.text.hasOwnProperty(key)){
+      style[key] = vis.text_style.text[key];
+
+    }
+  }
+  style.stretch = 'horizontal'; // horizontal stretch
+  style.textAlign = 'center'; // align center  
+  
+  // colorbar labels
+  var colorbar_labels = ui.Panel({
+    widgets: [
+      ui.Label(min_value, vis.text_style.text),
+      ui.Label((max_value + min_value) / 2, style),
+      ui.Label(max_value, vis.text_style.text)
+    ],
+    layout: ui.Panel.Layout.flow('horizontal')
+  });
+  
+  // colorbar panel
+  var colorbar_panel = ui.Panel({
+    widgets: [
+      ui.Label(title, vis.text_style.bold),
+      colorbar,
+      colorbar_labels,
+    ],
+    style: 
+    {
+      position: 'bottom-left',
+      padding: '8px',
+    }
+  });
+  
+  // return colorbar panel
+  return colorbar_panel;
+}
+
+// add Global Flood Database Map
+function add_gfd_map(){
+  // get max value
+  var max_value = globals.cumulativeFlooded
+    .reduceRegion(ee.Reducer.max(), globals.gaul_l1)
+    .get('flooded').getInfo();
+
+  // create colorbar
+  var flood_colorbar = createColorbar('Number of Times Flooded', max_value, 0, vis.palette);
+  
+  // add to map
+  Map.addLayer(
+    globals.cumulativeFlooded,
+    {
+      min: 0,
+      max: max_value,
+      palette: vis.palette,
+      opacity: 0.8,
+    },
+    'Global Flood Database'
+  );
+  
+  // add legend
+  Map.add(flood_colorbar);
+}
+
+// ----- graph drawing functions -----
+
+// draw frequency of graph based on country name
+function frequency_graph(source, area_name, palette){
+  // set start and end years
+  var start_year = 2000;
+  var end_year = 2018;
+  // extract year from image
+  function extract_year(image){
+    var year = image.date().get('year');
+    return image.set('year', year);
+  }
+  
+  // aggregate into array
+  var gfd_year = source.map(extract_year).aggregate_histogram('year').getInfo();
+  
+  // initialise data Table
+  var dataTable = [['year', 'frequency']];
+  
+  // Add data from the histogram to the DataTable
+  for (var y = start_year; y <= end_year; y++){
+    if(gfd_year.hasOwnProperty(y)){
+      dataTable.push([y, gfd_year[y]]);
+    } else {
+      dataTable.push([y, 0]);
+    }
+  }
+  
+  // create graph
+  var graph = ui.Chart({
+    dataTable: dataTable,
+    chartType: 'LineChart',
+    options: {
+      title: 'Frequency of Floods in ' + area_name + ' by Year',
+      hAxis: {title: 'Year', format: '####'},
+      vAxis: {title: 'Number of Floods'},
+      colors: vis.palette,
+    }
+  });
+  // return the graph element
+  return graph;
+}
+
+// ----- map on click -----
+
+
+// --------------- exports ---------------
+
+// ui functions
+exports.frequency_graph = frequency_graph;
+exports.add_gfd_map = add_gfd_map;
+exports.createColorbar = createColorbar;
+
+exports.getFloodedInAoi = getFloodedInAoi;
+
+

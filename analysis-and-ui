@@ -1,0 +1,401 @@
+// ---------- load dependencies ----------
+
+var globals = require('users/geraezemc/buildingbigdataapp:globals');
+var vis = require('users/geraezemc/buildingbigdataapp:vis-params');
+var UI_functions = require('users/geraezemc/buildingbigdataapp:UI-functions');
+var vi = require('users/geraezemc/buildingbigdataapp:jm-vulnerability');
+var vik_text = require('users/geraezemc/buildingbigdataapp:vik-text');
+var functions = require('users/geraezemc/buildingbigdataapp:functions');
+var landUseData = require('users/geraezemc/buildingbigdataapp:ge-landuse').landUseData;
+var pop_func = require('users/geraezemc/buildingbigdataapp:ge-population');
+
+// ---------- define variables ----------
+// flag to check if zoomed in or not
+// default to false - zoomed out
+var zoom_flag = false;
+
+// criterias to choose from
+var criterias = ['Vulnerability Index', 'Land Use', 'Population'];
+
+// ----- criteria selection -----
+
+// dropdown menu
+var select_analysis_criteria = ui.Select({
+  items: criterias,
+  value: criterias[0],
+  onChange: function(selectedValue){
+    // criteria_chosen = selectedValue;
+    var l2_selected = select_l2_panel.widgets().get(2).getValue();
+    // run analysis based on L2
+    // think of a way to get the selected value
+    l2_analysis(l2_selected);
+  },
+  style: vis.text_style.bold,
+});
+
+// ---------- analysis functions ----------
+
+// running analysis on the L1 level
+function l1_analysis(l1_name){
+  // extract area of interest
+  var aoi = globals.gaul_l1.filter(ee.Filter.eq('ADM1_NAME', l1_name));
+  var aoi_l2 = globals.gaul_l2.filter(ee.Filter.eq('ADM1_NAME', l1_name));
+  
+  // extract the flooded area within aoi
+  //var aoi_flooded = UI_functions.getFloodedInAoi(aoi, globals.cumulativeFlooded);
+  
+  // make sure analysis criteria is 0 so that it doesn't show anything else
+  select_analysis_criteria.setValue(criterias[0]);
+  
+  // update selection for l2 area
+  update_l2_selection(l1_name);
+  
+  // update summary
+  var summary_text = vik_text.createText(1, l1_name);
+    
+  // create vulnerability chart
+  var vi_chart = vi.vulnerability_index_chart(aoi_l2);
+  
+  // visualise on map
+  Map.clear();
+  Map.centerObject(aoi);
+  UI_functions.add_gfd_map();
+  vi.mapVulnerabilityIndex(aoi);
+  Map.addLayer(aoi.style({color: vis.colors.base, fillColor: 'FFFFFF00'}), {}, 'Map of '+ l1_name + ' region');
+  
+  // analysis part
+  
+  // updating UI
+  
+  // add summary
+  left_panel.widgets().set(7, summary_text);
+
+  
+  // add VI chart
+  left_panel.widgets().set(10, vi_chart);
+}
+
+// running analysis on the L2 level
+function l2_analysis(l2_name){
+  // update view so that it shows it's still loading
+  right_panel.widgets().set(4, ui.Label('Loading......', vis.text_style.text));
+  right_panel.widgets().set(5, ui.Label('Loading......', vis.text_style.text));
+
+  
+  // extract area of interest
+  var aoi = globals.gaul_l2.filter(ee.Filter.eq('ADM2_NAME', l2_name));
+  
+  var aoi_flooded = UI_functions.getFloodedInAoi(aoi, globals.cumulativeFlooded);
+  
+  // get l1 area
+  var l1_name = select_l1.getValue();
+  var l1 = globals.gaul_l1.filter(ee.Filter.eq('ADM1_NAME', l1_name));
+
+  // placeholder for chart
+  var chart = ui.Label();
+  
+  // Initialise on map
+  Map.clear();
+  Map.centerObject(aoi);
+  UI_functions.add_gfd_map();
+  
+  // switch between criterias
+  switch(select_analysis_criteria.getValue()){
+    // vulnerability
+    case criterias[0]:
+      // update panel
+      chart = vik_text.createText(2, l2_name);
+      right_panel.widgets().set(4, chart);
+      right_panel.widgets().set(5, ui.Label());
+      // add to map
+      vi.mapVulnerabilityIndex(aoi);
+      break;
+      
+    // land use
+    case criterias[1]:
+      // update panel
+      // chart = ui.Label("Land Use Selected.", vis.text_style.text);
+      functions.landuseStats(aoi, right_panel, 4);
+      
+      break;
+    
+    // population
+    case criterias[2]:
+      // update panel
+      pop_func.createPopulationChartAndLayers(aoi, aoi_flooded, right_panel, 4);
+      right_panel.widgets().set(5, ui.Label());
+      break;
+  }
+  
+  // add AOI to map  
+  Map.addLayer(l1.style({color: vis.colors.base, fillColor: 'FFFFFF00'}), {}, 'Map of ' + l1_name + ' region');
+  Map.addLayer(aoi.style({color: vis.colors.accent, fillColor: 'FFFFFF00'}), {}, l2_name + ' subregion');
+  
+  // analysis part
+  
+  // updating UI
+  
+  
+}
+
+// ----- selection of areas -----
+
+// select region from dropdown of L1
+var select_l1 = ui.Select({
+  items: globals.gaul_l1
+    .aggregate_array('ADM1_NAME').distinct().getInfo().sort(),
+  value: 'Sindh', // default value,
+  onChange: function(selectedValue){
+    var l1_name = selectedValue;
+    // update first panel
+    l1_analysis(l1_name);
+    
+    // 
+    
+    // update the second panel as well if zoomed in
+    // this is never true if automatically zooming out
+    if(zoom_flag){
+    //   // zooming out to L1 level
+    //   // update flag
+      zoom_flag = false;
+      // remove panel
+      ui.root.remove(right_panel);
+      // re-enable zoom_in_button
+      zoom_in_button.setDisabled(false);
+    //   update_l2_selection(l1_name);
+    }
+  },
+  // set style to bold
+  style: vis.text_style.bold
+});
+
+// panel for selecting L1
+var select_l1_panel = ui.Panel({
+  widgets: [
+    ui.Label("Select area of interest:", vis.text_style.bold),
+    select_l1,
+  ],
+  layout: ui.Panel.Layout.flow("horizontal", true),
+});
+
+// title for panel
+var select_l2_title = ui.Label(
+  "", 
+  vis.text_style.title
+);
+
+// some explanatory text
+var select_l2_text = ui.Label(
+  "",
+  vis.text_style.text
+);
+// placeholder
+var select_l2_ph = ui.Select();
+
+// panel for selecting L2
+var select_l2_panel = ui.Panel({
+  widgets: [select_l2_title, select_l2_text, select_l2_ph],
+  layout: ui.Panel.Layout.flow("vertical", true)
+});
+
+// updating L2 selection based on L1 selection
+function update_l2_selection(l1_name){
+  // get list of L2 within selected L1
+  var l2_list = globals.gaul_l2
+    .filter(ee.Filter.eq('ADM1_NAME', l1_name))
+    .aggregate_array('ADM2_NAME').distinct().getInfo().sort();
+  
+  // set default value to the first value
+  var l2_name = l2_list[0];
+  
+  // select subregion from dropdown of L2
+  var select_l2 = ui.Select({
+    items: l2_list,
+    value: l2_list[0], // default value,
+    onChange: function(selectedValue){
+      var l2_name = selectedValue;
+      update_l2_summary_label(l2_name);
+      l2_analysis(l2_name);
+    },
+    style: vis.text_style.bold
+  });
+  
+  // title for panel
+  select_l2_title.setValue("Analysis of regions in " + l1_name);
+  
+  // some explanatory text
+  select_l2_text.setValue(
+    "Select subregion within " + l1_name + " to view more detailed analysis."
+  );
+  
+  // update selection tool to the correct position
+  select_l2_panel.widgets().set(2, select_l2);
+  
+  // update the subtitle for summary
+  update_l2_summary_label(l2_name);
+  
+  // run the analysis
+  l2_analysis(l2_name);
+}
+
+function update_l2_summary_label(l2_name){
+  // make the subtitle for summary
+  var l2_summary_label = ui.Label(
+    "Summary of " + l2_name, 
+    vis.text_style.bold
+  );
+
+  // update the title
+  right_panel.widgets().set(3, l2_summary_label);  
+}
+
+
+// ---------- UI components ----------
+
+// ----- left panel -----
+
+// button to deep dive into sub-region
+var zoom_in_button = ui.Button({
+  label: "Zoom into sub-region",
+  onClick: function(){
+    // update flag
+    zoom_flag = true;
+    // add panel
+    ui.root.add(right_panel);
+    // disable button
+    zoom_in_button.setDisabled(true);
+    
+    // reset the right panel
+    update_l2_selection(select_l1.getValue());
+  },
+  // set to title
+  style: vis.text_style.title,
+});
+
+// button to zoom out
+var zoom_out_button = ui.Button({
+  label: "Zoom out to regional scale",
+  onClick: function(){
+    // update flag
+    zoom_flag = false;
+    // remove panel
+    ui.root.remove(right_panel);
+    // re-enable zoom_in_button
+    zoom_in_button.setDisabled(false);
+    // run analysis
+    l1_analysis(select_l1.getValue());
+  },
+  style: vis.text_style.bold,
+});
+
+// add panel to left of screen
+var left_panel = ui.Panel({
+  widgets: [
+    // title
+    ui.Label(
+     "Flood Events in Pakistan",
+      vis.text_style.title
+    ),
+    // header text
+    ui.Label(
+      "This application explores the potential exposure to flood risk in Pakistan. Assuming areas flooded in the past have a higher risk of flooding, this app identifies which areas are more prone to flooding from the perspectives of population, economic activity, and agriculture.",
+      vis.text_style.text
+    ),
+    
+    // frequency graph
+    ui.Label(),
+    // UI_functions.frequency_graph(globals.gfd, 'Pakistan', [vis.colors.accent]),
+    
+    // data source
+    ui.Label(
+      "Data source: Dartmouth Flood Observatory (https://gee-community-catalog.org/projects/flood/)",
+      vis.text_style.small
+    ),
+
+    // select area
+    select_l1_panel,
+    
+    // button to dive into the second level
+    zoom_in_button,
+    
+    ui.Label(
+      "Summary of Area",
+      vis.text_style.bold
+    ),
+
+    // placeholder for the analysis
+    // updated in different function
+    ui.Label("Loading......", vis.text_style.text),
+    
+    // comparison within subregions
+    ui.Label(
+      "Comparison of subregions within this area",
+      vis.text_style.bold
+    ),
+    ui.Label(
+      "Regions in comparison by Vulnerability Index (VI). VI is calculated as \n(Frequency of flood) x (Population).",
+      vis.text_style.text
+    ),
+
+    // Placeholder updated in different function
+    ui.Label("Loading......", vis.text_style.text),
+    
+
+  ],
+
+  style: {
+    maxWidth: "25%"
+  },
+  layout: ui.Panel.Layout.flow("vertical", true),
+});
+
+// ----- right panel -----
+
+// UI that selects the criteria
+var select_analysis_panel = ui.Panel({
+  widgets: [
+    // title
+    ui.Label('Select the Criteria to Analyze:', vis.text_style.bold),
+    // // explanation
+    // ui.Label(
+    //   "Select the perspective you wish to explore:",
+    //   vis.text_style.text
+    // ),
+    select_analysis_criteria
+  ],
+  layout: ui.Panel.Layout.flow("horizontal", true),
+});
+
+
+// add panel to right of screen
+var right_panel = ui.Panel({
+  widgets: [
+    zoom_out_button,
+    // placeholder for L2 selection
+    select_l2_panel,
+    
+    // placeholder for criteria selection
+    select_analysis_panel,
+    
+    // placeholder for summary
+    ui.Label(),
+    
+    // placeholder for charts
+    ui.Label("Loading......", vis.text_style.text),
+    ui.Label("Loading......", vis.text_style.text),
+    
+  ],
+  style: {
+    maxWidth: "25%",
+  },
+  layout: ui.Panel.Layout.flow("vertical", true),
+});
+
+// ---------- exports ----------
+
+exports.left_panel = left_panel;
+exports.right_panel = right_panel;
+exports.l1_analysis = l1_analysis;
+exports.l2_analysis = l2_analysis;
+
+

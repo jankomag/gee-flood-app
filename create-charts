@@ -1,0 +1,15 @@
+
+
+function create_chart(aoi){
+
+  var chart = ui.Chart();
+
+
+
+
+  return chart;
+}
+
+exports.create_chart();
+
+

@@ -1,0 +1,22 @@
+var gfd = ee.ImageCollection('GLOBAL_FLOOD_DB/MODIS_EVENTS/V1');
+
+// Aggregate all flood data to generate a map of cumulative flooded areas.
+var cumulativeFlooded = gfd.select('flooded').sum();
+exports.cumulativeFlooded = cumulativeFlooded;
+
+// // Add cumulative flooded areas layer to the map.
+// Map.addLayer(
+//   cumulativeFlooded.selfMask(),
+//   {min: 0, max: 10,  opacity: 0.4, palette: ['0000FF', '0040FF', '0080FF', '00BFFF', '00FFFF', '40FFBF', '80FF80', 'BFFF40', 'FFFF00', 'FFBF00', 'FF8000', 'FF4000', 'FF0000']},
+//   'Cumulative Flooded Areas');
+
+// Overlay permanent water to distinguish flood water.
+var jrc = gfd.select('jrc_perm_water').sum().gte(1);
+// Map.addLayer(
+//   jrc.selfMask(),
+//   {min: 0, max:  1, opacity: 0.4, palette: ['00008B']},
+//   'JRC Permanent Water');
+
+// Center map on an example area or globally visible scale.
+// Map.setCenter(0, 0, 2); // Centers the map globally at a zoom level that shows continents. 
+

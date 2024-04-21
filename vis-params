@@ -1,0 +1,78 @@
+// ----- visualisation parameters -----
+
+// set colors
+var colors = {
+  'white': '#ffffff',
+  'base': '#263247',
+  'main': '#12587b',
+  'accent': '#ff5264',
+  'light': '#5ab2ee',
+  'light2': '#c5e5fc'
+};
+
+// set palette
+var palette = [colors.white, colors.light, colors.main];
+
+// set text styles style
+var font_families = ['Fira Sans', 'monospace', 'serif'];
+
+var title_text_style = {
+  fontWeight: 'bold',
+  fontSize: '18px',
+  fontFamily: font_families,
+  color: colors.accent,
+};
+
+var bold_text_style = {
+  fontWeight: 'bold',
+  fontSize: '14px',
+  fontFamily: font_families,
+  color: colors.main,
+};
+
+var normal_text_style = {
+  fontSize: '14px',
+  fontFamily: font_families,
+  color: colors.base,
+};
+
+var small_text_style = {
+  fontSize: '10px',
+  fontFamily: font_families,
+  color: colors.base,
+};
+
+// compile text styles
+var text_style = {
+  title: title_text_style,
+  bold: bold_text_style,
+  text: normal_text_style,
+  small: small_text_style
+};
+
+// fill only color
+function fill_only(color){
+  var dict = {
+    color: 'FFFFFF00',
+    fillColor: color,
+    width: 0,
+  };
+  return dict;
+}
+
+// border only color
+function border_only(color, width){
+  var dict = {
+    color: color,
+    fillColor: 'FFFFFFFF',
+    width: width,
+  };
+}
+
+// export
+
+exports.colors = colors;
+exports.palette = palette;
+exports.fill_only = fill_only;
+exports.border_only = border_only;
+exports.text_style = text_style;

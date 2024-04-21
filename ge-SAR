@@ -1,0 +1,158 @@
+var aoi = ee.FeatureCollection(geometry);
+
+// Load and process GFD data
+var gfd = ee.ImageCollection('GLOBAL_FLOOD_DB/MODIS_EVENTS/V1');
+var floodDates = gfd.aggregate_array('system:time_start').distinct();
+
+// Load and process SAR data
+var sarCollection = ee.ImageCollection('COPERNICUS/S1_GRD')
+  .filter(ee.Filter.listContains('transmitterReceiverPolarisation', 'VV'))
+  .filter(ee.Filter.eq('instrumentMode', 'IW'))
+  .select('VV');
+
+var sarFloodDates = floodDates.map(function(date) {
+  var startDate = ee.Date(date);
+  var endDate = startDate.advance(1, 'day');
+  return sarCollection.filterDate(startDate, endDate);
+});
+
+function processFloodSAR(sarImage) {
+  var smoothing_radius = 50;
+  var filtered = sarImage.focal_mean(smoothing_radius, 'circle', 'meters');
+  
+  var threshold = -20;
+  var floodMask = filtered.lt(threshold);
+  
+  // Additional processing steps (e.g., masking, removing small clusters)
+  // ...
+  
+  return floodMask;
+}
+
+var sarFloodExtents = sarFloodDates.map(function(collection) {
+  return collection.map(processFloodSAR);
+});
+
+// Compare flood extents
+var floodComparisons = ee.ImageCollection(floodDates.map(function(date) {
+  var gfdFlood = gfd.filterDate(date, ee.Date(date).advance(1, 'day')).first();
+  var sarFlood = sarFloodExtents.filterDate(date, ee.Date(date).advance(1, 'day')).mosaic();
+  
+  var overlap = gfdFlood.select('flooded').and(sarFlood);
+  var difference = gfdFlood.select('flooded').neq(sarFlood);
+  
+  return gfdFlood.select('flooded').addBands(sarFlood).addBands(overlap).addBands(difference)
+    .set('system:time_start', date);
+}));
+
+// Damage assessment
+var population_count = ee.Image('JRC/GHSL/P2016/POP_GPW_GLOBE_V1/2015').clip(aoi);
+var GHSLprojection = population_count.projection();
+
+var LC = ee.ImageCollection('MODIS/006/MCD12Q1')
+  .filterDate('2014-01-01', '2022-12-31')
+  .sort('system:index', false)
+  .select("LC_Type1")
+  .first()
+  .clip(aoi);
+
+var cropmask = LC.eq(12).or(LC.eq(14));
+var cropland = LC.updateMask(cropmask);
+var MODISprojection = LC.projection();
+
+var urbanmask = LC.eq(13);
+var urban = LC.updateMask(urbanmask);
+
+// Map production
+var results = ui.Panel({
+  style: {
+    position: 'bottom-left',
+    padding: '8px 15px',
+    width: '350px'
+  }
+});
+
+var textVis = {
+  'margin': '0px 8px 2px 0px',
+  'fontWeight': 'bold'
+};
+
+var numberVIS = {
+  'margin': '0px 0px 15px 0px',
+  'color': 'bf0f19',
+  'fontWeight': 'bold'
+};
+
+var subTextVis = {
+  'margin': '0px 0px 2px 0px',
+  'fontSize': '12px',
+  'color': 'grey'
+};
+
+var titleTextVis = {
+  'margin': '0px 0px 15px 0px',
+  'fontSize': '18px',
+  'font-weight': '',
+  'color': '3333ff'
+};
+
+// Create labels for the results
+var title = ui.Label('Results', titleTextVis);
+var text1 = ui.Label('Flood comparison between GFD and SAR', textVis);
+var text2 = ui.Label('Exposed population and affected areas', textVis);
+
+results.add(ui.Panel([title, text1, text2]));
+Map.add(results);
+
+// Display legend on the map
+var legend = ui.Panel({
+  style: {
+    position: 'bottom-right',
+    padding: '8px 15px',
+  }
+});
+
+var legendTitle = ui.Label('Legend', titleTextVis);
+legend.add(legendTitle);
+
+var makeRow = function(color, name) {
+  var colorBox = ui.Label({
+    style: {
+      backgroundColor: color,
+      padding: '8px',
+      margin: '0 0 4px 0'
+    }
+  });
+
+  var description = ui.Label({
+    value: name,
+    style: {margin: '0 0 4px 6px'}
+  });
+
+  return ui.Panel({
+    widgets: [colorBox, description],
+    layout: ui.Panel.Layout.Flow('horizontal')
+  });
+};
+
+var palette = ['blue', 'black', 'green', 'red'];
+var names = ['GFD Flood Extent', 'SAR Flood Extent', 'Overlap', 'Difference'];
+
+for (var i = 0; i < 4; i++) {
+  legend.add(makeRow(palette[i], names[i]));
+}
+
+Map.add(legend);
+
+// Visualization parameters
+var floodVisParams = {bands: ['flooded'], palette: ['blue']};
+var sarVisParams = {bands: ['VV'], min: 0, max: 1, palette: ['black', 'white']};
+var overlapVisParams = {bands: ['flooded'], palette: ['green']};
+var differenceVisParams = {bands: ['flooded'], palette: ['red']};
+
+// Display comparison layers on the map
+Map.centerObject(aoi, 8);
+Map.addLayer(floodComparisons, floodVisParams, 'GFD Flood Extent');
+Map.addLayer(floodComparisons, sarVisParams, 'SAR Flood Extent');
+Map.addLayer(floodComparisons, overlapVisParams, 'Overlap');
+Map.addLayer(floodComparisons, differenceVisParams, 'Difference');

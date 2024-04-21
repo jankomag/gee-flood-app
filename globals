@@ -1,0 +1,30 @@
+var adminBoundaries = ee.FeatureCollection('FAO/GAUL_SIMPLIFIED_500m/2015/level1');
+var aoi = adminBoundaries.filter(ee.Filter.eq('ADM1_NAME', 'Sindh'));
+var HRSL_30m = ee.ImageCollection("projects/sat-io/open-datasets/hrsl/hrslpop");
+
+// admin boundaries for Pakistan
+var gaul_l1 = ee.FeatureCollection("FAO/GAUL/2015/level1")
+  .filter(ee.Filter.eq('ADM0_NAME', 'Pakistan'));
+var gaul_l2 = ee.FeatureCollection("FAO/GAUL/2015/level2")
+  .filter(ee.Filter.eq('ADM0_NAME', 'Pakistan'));
+
+// set default value for initialisation
+var default_l1_value = 'Sindh';
+
+var gfd = ee.ImageCollection('GLOBAL_FLOOD_DB/MODIS_EVENTS/V1');
+var cumulativeFlooded = gfd.select('flooded').sum();
+var perm_water = gfd.select('jrc_perm_water').sum().gte(1);
+// Subtract permanent water from cumulative flooded areas
+var cumulativeFlooded = cumulativeFlooded.where(perm_water, 0);
+var vulnerabilityIndex = HRSL_30m.mean().multiply(cumulativeFlooded);
+
+exports.cumulativeFlooded = cumulativeFlooded;
+exports.vulnerabilityIndex = vulnerabilityIndex;
+exports.aoi = aoi;
+
+exports.gaul_l1 = gaul_l1;
+exports.gaul_l2 = gaul_l2;
+exports.default_l1_value = default_l1_value;
+
+// var gfd = ee.ImageCollection('GLOBAL_FLOOD_DB/MODIS_EVENTS/V1');
+// var cumulativeFlooded = gfd.select('flooded').sum();

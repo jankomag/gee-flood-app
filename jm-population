@@ -1,0 +1,108 @@
+Map.setOptions("satellite");
+var palettes = require('users/gena/packages:palettes');
+var style = require('users/gena/packages:style');
+var functions = require('users/geraezemc/buildingbigdataapp:functions');
+var calcPopSum = functions.calcPopSum;
+var aoi = require('users/geraezemc/buildingbigdataapp:globals').aoi;
+var cumulativeFlooded = require('users/geraezemc/buildingbigdataapp:globals').cumulativeFlooded;
+var HRSL_general = ee.ImageCollection("projects/sat-io/open-datasets/hrsl/hrslpop");
+var HRSL_clipped = HRSL_general.filterBounds(aoi).mosaic();
+var palette = palettes.colorbrewer.OrRd[4];
+
+Map.addLayer(aoi, {opacity: 0.5})
+Map.addLayer(cumulativeFlooded.selfMask(),
+  {min: 0, max: 15,  opacity: 0.6, palette: ['0000FF', '0040FF', '0080FF', '00BFFF', '00FFFF', '40FFBF', '80FF80', 'BFFF40', 'FFFF00', 'FFBF00', 'FF8000', 'FF4000', 'FF0000']},
+  'Cumulative Flooded Areas');
+
+var gaul_l1 = ee.FeatureCollection("FAO/GAUL/2015/level1")
+  .filter(ee.Filter.eq('ADM0_NAME', 'Pakistan'));
+  
+function getHRSL(aoi) {
+  var HRSL_30m = ee.ImageCollection("projects/sat-io/open-datasets/hrsl/hrslpop");
+  var HRSL_clipped = HRSL_30m.filterBounds(aoi).mosaic();
+  var totalPopInAOI = HRSL_clipped.reduceRegion({
+    reducer: ee.Reducer.sum(),
+    geometry: aoi.geometry(),
+    scale: 30,
+    maxPixels: 1e13
+  }).get('b1'); 
+  return totalPopInAOI;
+}
+
+var totalpop = getHRSL(aoi);
+print(totalpop);
+
+// Generate flood risk zones list
+var floodRiskZones = ee.List.sequence(1, 5);
+var features = floodRiskZones.map(function(zone) {
+  // Calculate population sum for each flood zone
+  return calcPopSum(zone, aoi, HRSL_general, cumulativeFlooded);
+});
+// print(features);
+
+// Create a chart with population sum on the y-axis
+// var chart = ui.Chart.feature.byFeature(features)
+//   .setChartType('LineChart')
+//   .setOptions({
+//     title: 'Population Sum by Flood Zone',
+//     // hAxis: {title: 'Flood Zone'},
+//     vAxis: {title: 'Population Sum'}
+//   });
+// print(chart);
+
+// var percentage = functions.calcPopPerc(flood_in_aoi, aoi, HRSL_general.mean());
+// print('Percentage of population in flooded area:', percentage);
+
+
+
+// Imports
+var palettes = require('users/gena/packages:palettes');
+
+function createPopulationChartAndLayers(aoi) {
+  // Load and filter data as before
+  var HRSL_general = ee.ImageCollection("projects/sat-io/open-datasets/hrsl/hrslpop").mosaic().clip(aoi);
+  var HRSL_youth = ee.ImageCollection("projects/sat-io/open-datasets/hrsl/hrsl_youth").mosaic().clip(aoi);
+  var HRSL_children_under_five = ee.ImageCollection("projects/sat-io/open-datasets/hrsl/hrsl_children_under_five").mosaic().clip(aoi);
+  var HRSL_elderly_over_sixty = ee.ImageCollection("projects/sat-io/open-datasets/hrsl/hrsl_elderly_over_sixty").mosaic().clip(aoi);
+
+  var HRSL_collection = ee.Image.cat([
+    HRSL_general.select('b1').rename('total'),
+    HRSL_youth.select('b1').rename('youth'),
+    HRSL_children_under_five.select('b1').rename('children'),
+    HRSL_elderly_over_sixty.select('b1').rename('elderly')
+  ]);
+
+  var populationByAgeBand = HRSL_collection.reduceRegion({
+    reducer: ee.Reducer.sum(),
+    geometry: aoi,
+    scale: 300,
+    bestEffort: true
+  });
+
+  populationByAgeBand.evaluate(function(results) {
+    if (!results) {
+      console.error('No results returned.');
+      return;
+    }
+
+    var totalPopulation = results.total;
+    var youthPercentage = (results.youth / totalPopulation) * 100;
+    var elderlyPercentage = (results.elderly / totalPopulation) * 100;
+
+    // Create layers for youth percentage and elderly percentage
+    var youthLayer = HRSL_youth.divide(totalPopulation).multiply(100);
+    var elderlyLayer = HRSL_elderly_over_sixty.divide(totalPopulation).multiply(100);
+    
+    var max_elder = elderlyLayer.reduceRegion(ee.Reducer.max(), aoi).get('b1').getInfo();
+
+
+    // Add layers to the map
+    Map.addLayer(youthLayer, {min: 0, max: 100, palette: palette}, 'Percentage of Youth');
+    Map.addLayer(elderlyLayer, {min: 0, max: max_elder, palette: palette}, 'Percentage of Elderly');
+
+    // Create a chart as before...
+    // Rest of the code for creating the chart and displaying it on the UI panel...
+  });
+}
+
+createPopulationChartAndLayers(aoi);

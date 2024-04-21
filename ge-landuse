@@ -1,0 +1,53 @@
+var aoi = require('users/geraezemc/buildingbigdataapp:ge-aoi');
+var aoi = aoi.aoi;
+
+// Set the date range for a specific month
+var START = ee.Date('2022-02-01');
+var END = START.advance(12, 'week');
+
+var colFilter = ee.Filter.and(
+  ee.Filter.bounds(aoi),
+  ee.Filter.date(START, END)
+);
+
+// Load and filter the Dynamic World collection
+var dwCol = ee.ImageCollection('GOOGLE/DYNAMICWORLD/V1')
+  .filter(colFilter)
+  .select('label');
+
+// Load and filter the Sentinel-2 collection
+var s2Col = ee.ImageCollection('COPERNICUS/S2')
+  .filter(colFilter);
+
+// Calculate the average Dynamic World labels over the month
+var dwAvg = dwCol.reduce(ee.Reducer.mode()).clip(aoi);
+
+// Create a visualization of the average Dynamic World labels
+var CLASS_NAMES = [
+  'water', 'trees', 'grass', 'flooded_vegetation', 'crops',
+  'shrub_and_scrub', 'built', 'bare', 'snow_and_ice'
+];
+var VIS_PALETTE = [
+  '263247', '397d49', '88b053', '7a87c6', 'e49635', 'dfc35a', 'c4281b',
+  'a59b8f', 'b39fe1'
+];
+
+//Map.addLayer(dwAvg, {scale: 100, opacity:0.7}, 'Dynamic World Average Data')
+
+var dwAvgVis = dwAvg.visualize({
+  min: 0,
+  max: 8,
+  palette: VIS_PALETTE
+});
+
+// Calculate the median Sentinel-2 image over the month
+var s2Median = s2Col.median();
+
+// Display the average Dynamic World labels and median Sentinel-2 image
+Map.centerObject(aoi, 7);
+//Map.addLayer(s2Median.clip(aoi), {min: 0, max: 3000, bands: ['B4', 'B3', 'B2'], scale: 100}, 'Sentinel-2 Median');
+var dwAvgVisAoi = dwAvgVis.clip(aoi)
+Map.addLayer(dwAvgVisAoi, {scale: 100, opacity:0.7}, 'Dynamic World Average Labels');
+
+//Export land areas
+exports.landUseData = dwAvg;

@@ -1,0 +1,28 @@
+var aoi = require('users/geraezemc/buildingbigdataapp:ge-aoi');
+
+// Load Admin boundaries
+var aoi = aoi.aoi;
+
+// Load the buildings dataset with a confidence threshold
+var buildings = ee.FeatureCollection('GOOGLE/Research/open-buildings/v3/polygons')
+    .filter(ee.Filter.gte('confidence', 0.75));
+
+// Filter buildings by AOI
+var buildings_in_aoi = buildings.filterBounds(aoi.geometry());
+
+// Visualize Nairobi Boundary and Buildings
+Map.addLayer(aoi, {color: 'black'}, 'AOI Boundary');
+Map.addLayer(buildings_in_aoi, {color: 'red'}, 'Buildings in AOI');
+Map.centerObject(aoi, 7); // Adjust zoom level as necessary
+Map.setOptions('SATELLITE');
+
+// Calculate and print the number of buildings
+var numberOfBuildings = buildings_in_aoi.size();
+print('Number of buildings in AOI:', numberOfBuildings);
+
+// Calculate and print the total area of buildings
+var totalArea = buildings_in_aoi.reduceColumns({
+  reducer: ee.Reducer.sum(),
+  selectors: ['area_in_meters']
+}).get('sum');
+print('Total area of buildings in meters:', totalArea);

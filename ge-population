@@ -1,0 +1,221 @@
+// Imports
+var palettes = require('users/gena/packages:palettes');
+var vis = require('users/geraezemc/buildingbigdataapp:vis-params');
+
+// Dependencies
+var globals = require('users/geraezemc/buildingbigdataapp:globals');
+var UI_functions = require('users/geraezemc/buildingbigdataapp:UI-functions');
+
+function createPopulationChartAndLayers(aoi, aoi_flooded, widgetPanel, widgetIndex) {
+  // Load and filter data for both aoi and aoi_flooded
+  var HRSL_general = ee.ImageCollection("projects/sat-io/open-datasets/hrsl/hrslpop").mosaic();
+  var HRSL_youth = ee.ImageCollection("projects/sat-io/open-datasets/hrsl/hrsl_youth").mosaic();
+  var HRSL_children_under_five = ee.ImageCollection("projects/sat-io/open-datasets/hrsl/hrsl_children_under_five").mosaic();
+  var HRSL_elderly_over_sixty = ee.ImageCollection("projects/sat-io/open-datasets/hrsl/hrsl_elderly_over_sixty").mosaic();
+
+  var HRSL_collection = ee.Image.cat([
+    HRSL_general.select('b1').rename('total'),
+    HRSL_youth.select('b1').rename('youth'),
+    HRSL_children_under_five.select('b1').rename('children'),
+    HRSL_elderly_over_sixty.select('b1').rename('elderly')
+  ]);
+
+  // Create a map and center
+  var map = ui.Map();
+  map.setOptions("satellite");
+  map.centerObject(aoi, 8);
+
+  // Add the AOI layer with fill and opacity
+  var aoiVisParams = {
+    color: 'white',
+    fillColor: 'white',
+    opacity: 0.5
+  };
+  map.addLayer(aoi, aoiVisParams, 'Area Of Interest');
+
+  // Visualization parameters for the flooded area with no outline
+var floodedVisParams = {
+  palette: ['#5ab2ee'],  // Set the fill color
+  opacity: 0.5       // Set the opacity
+};
+
+// Convert the feature collection to an image, specifying fill width
+// Use 0 as the second argument, which should be the fill value and not color
+var floodedImage = ee.Image().paint(aoi_flooded, '#5ab2ee');
+
+// Add the styled image as a layer to the map with correct visualization parameters
+map.addLayer(floodedImage, floodedVisParams, 'Flooded Area');
+
+  // Calculate population by age band for aoi and aoi_flooded
+  var populationByAgeBand_aoi = HRSL_collection.reduceRegion({
+    reducer: ee.Reducer.sum(),
+    geometry: aoi.geometry(),
+    scale: 30,
+    // bestEffort: true,
+    maxPixels: 1e13
+  });
+
+  var populationByAgeBand_aoi_flooded = HRSL_collection.reduceRegion({
+    reducer: ee.Reducer.sum(),
+    geometry: aoi_flooded.geometry(),
+    scale: 30,
+    // bestEffort: true,
+    maxPixels: 1e13
+  });
+
+  // Evaluate the results for both aoi and aoi_flooded
+  populationByAgeBand_aoi.evaluate(function(results_aoi) {
+    populationByAgeBand_aoi_flooded.evaluate(function(results_aoi_flooded) {
+      if (!results_aoi || !results_aoi_flooded) {
+        console.error('No results returned.');
+        return;
+      }
+
+      // Create charts and text for aoi
+      var chartData_aoi = createChartData(results_aoi);
+      var dataTable_aoi = createDataTable(chartData_aoi, palettes.colorbrewer.Blues[4]);
+      var chart_aoi = createChart(dataTable_aoi, 'Population Distribution by Age Band (AOI)');
+      var text_aoi = createText(chartData_aoi);
+
+      // Create charts and text for aoi_flooded
+      var chartData_aoi_flooded = createChartData(results_aoi_flooded);
+      var dataTable_aoi_flooded = createDataTable(chartData_aoi_flooded, palettes.colorbrewer.YlGnBu[4]);
+      var chart_aoi_flooded = createChart(dataTable_aoi_flooded, 'Population Distribution by Age Band (Flooded AOI)');
+      var text_aoi_flooded = createFloodedText(chartData_aoi_flooded, chartData_aoi);
+
+      // Create the right panel with charts and text for both aoi and aoi_flooded
+      var rightPanel = ui.Panel({
+        widgets: [
+          chart_aoi,
+          ui.Label(text_aoi, vis.text_style.text),
+          chart_aoi_flooded,
+          ui.Label(text_aoi_flooded, vis.text_style.text)
+        ],
+        // style: { width: '400px', padding: '8px' }
+      });
+
+      // Add the total population layer to the map with normalization
+      var totalPopulationLayer = HRSL_collection.select('total').clip(aoi);
+
+      // Define a Gaussian kernel with a specific radius (e.g., 3 pixels)
+      var kernel = ee.Kernel.gaussian({
+        radius: 20, // Radius of the kernel in pixels
+        sigma: 1, // Standard deviation of the Gaussian function
+        units: 'pixels', // Units of the radius
+        normalize: true // Normalize the kernel weights to sum to 1
+      });
+
+      // Apply the kernel to the population layer using convolve
+      var smoothedPopulationLayer = totalPopulationLayer.convolve(kernel);
+
+      // Evaluate the maximum population to set visualization parameters
+      var maxPopulation = smoothedPopulationLayer.reduceRegion({
+        reducer: ee.Reducer.max(),
+        geometry: aoi,
+        scale: 300,
+        bestEffort: true
+      }).get('total');
+
+      maxPopulation.evaluate(function(maxValue) {
+        var totalPopulationVisParams = {
+          min: 0,
+          max: maxValue,
+          palette: palettes.colorbrewer.YlOrRd[9]
+        };
+
+        // Add the smoothed population layer instead of the original
+        // map.addLayer(smoothedPopulationLayer, totalPopulationVisParams, 'Total Population');
+        Map.addLayer(smoothedPopulationLayer, totalPopulationVisParams, 'Total Population');
+
+
+        // Add a legend to the map
+        var createColorbar = UI_functions.createColorbar;
+        var population_colorbar = createColorbar('Total Population', totalPopulationVisParams.max, totalPopulationVisParams.min, totalPopulationVisParams.palette);
+        // map.add(population_colorbar);
+        Map.add(population_colorbar);
+
+
+        // Create a panel with the map and right panel
+        var mainPanel = ui.Panel({
+          widgets: [
+            map,
+            rightPanel
+          ],
+          layout: ui.Panel.Layout.Flow('horizontal'),
+          style: {stretch: 'both'}
+        });
+
+        // Set the main panel as the root UI element
+        // return rightPanel;
+        widgetPanel.widgets().set(widgetIndex, rightPanel);
+        //ui.root.clear();
+        //ui.root.add(mainPanel);
+      });
+    });
+  });
+}
+
+// Helper functions
+function createChartData(results) {
+  var totalPopulation = results.total;
+  var youthPercentage = (results.youth / totalPopulation) * 100;
+  var childrenPercentage = (results.children / totalPopulation) * 100;
+  var elderlyPercentage = (results.elderly / totalPopulation) * 100;
+  var adultPopulation = totalPopulation - results.youth - results.children - results.elderly;
+  var adultPercentage = (adultPopulation / totalPopulation) * 100;
+
+  return [
+    { population: results.children, percentage: childrenPercentage, label: 'Children (0-5)' },
+    { population: results.youth, percentage: youthPercentage, label: 'Youth (15-24)' },
+    { population: adultPopulation, percentage: adultPercentage, label: 'Adults (24-60)' },
+    { population: results.elderly, percentage: elderlyPercentage, label: 'Elderly (60+)' }
+  ];
+}
+
+function createDataTable(chartData, colors) {
+  var dataTable = [['Age Band', 'Percentage', {role: 'style'}, {role: 'annotation'}, {role: 'tooltip', type: 'string', p: {html: true}}]];
+  chartData.forEach(function(data, index) {
+    var tooltipContent = '<div style="padding:5px 5px 5px 5px;">' +
+                         '<strong>Age Band:</strong> ' + data.label + '<br/>' +
+                         '<strong>Percentage:</strong> ' + data.percentage.toFixed(1) + '%' + '<br/>' +
+                         '<strong>Population:</strong> ' + data.population.toLocaleString() + '</div>';
+    dataTable.push([data.label, data.percentage, colors[index], data.percentage.toFixed(1) + '%', tooltipContent]);
+  });
+  return dataTable;
+}
+
+function createChart(dataTable, title) {
+  return ui.Chart(dataTable)
+    .setChartType('ColumnChart')
+    .setOptions({
+      title: title,
+      titleTextStyle: { fontSize: 18 },
+      hAxis: { title: 'Age Band', textStyle: { fontSize: 10 }, showTextEvery: 1 },
+      vAxis: { title: 'Percentage', format: 'percent', viewWindow: { min: 0 }, gridlines: { count: -1 } },
+      legend: { position: 'none' },
+      bar: { groupWidth: '75%' },
+      chartArea: { width: '150%', height: '70%' },
+      annotations: { alwaysOutside: true },
+      tooltip: { isHtml: true }
+    });
+}
+
+function createText(chartData) {
+  var totalPopulation = chartData.reduce(function(sum, data) { return sum + data.population; }, 0);
+  
+  return 'Most populous age band is ' + chartData[2].label + ' with ' + chartData[2].population.toLocaleString() + ' inhabitants, representing ' + chartData[2].percentage.toFixed(1) + '% of the population, followed by ' + chartData[1].label + ' with ' + chartData[1].population.toLocaleString() + ' inhabitants, representing ' + chartData[1].percentage.toFixed(1) + '%. It is important to consider the needs of the most vulnerable groups: Children aged 0-5 with ' + chartData[0].population.toLocaleString() + ' inhabitants, representing ' + chartData[0].percentage.toFixed(1) + '% and Elderly aged 60 and above, who represent ' + chartData[3].population.toLocaleString() + ' inhabitants, representing ' + chartData[3].percentage.toFixed(1) + '% of the population respectively. These groups require special attention during emergencies such as flooding events due to their increased vulnerability.' + 
+         ' The total population in the AOI is ' + totalPopulation.toLocaleString() + ' inhabitants.';
+}
+
+function createFloodedText(chartData_flooded, chartData_aoi) {
+  var totalPopulation = chartData_aoi.reduce(function(sum, data) { return sum + data.population; }, 0);
+  var floodedPopulation = chartData_flooded.reduce(function(sum, data) { return sum + data.population; }, 0);
+  var floodedPercentage = (floodedPopulation / totalPopulation) * 100;
+
+  return 'In the flooded area, the most populous age band is ' + chartData_flooded[2].label + ' with ' + chartData_flooded[2].population.toLocaleString() + ' inhabitants, representing ' + chartData_flooded[2].percentage.toFixed(1) + '% of the affected population, followed by ' + chartData_flooded[1].label + ' with ' + chartData_flooded[1].population.toLocaleString() + ' inhabitants, representing ' + chartData_flooded[1].percentage.toFixed(1) + '%. The vulnerable groups of Children aged 0-5 with ' + chartData_flooded[0].population.toLocaleString() + ' inhabitants, representing ' + chartData_flooded[0].percentage.toFixed(1) + '% and Elderly aged 60 and above, who represent ' + chartData_flooded[3].population.toLocaleString() + ' inhabitants, representing ' + chartData_flooded[3].percentage.toFixed(1) + '% of the affected population respectively. Overall, ' + floodedPercentage.toFixed(1) + '% of the total population in the area, equivalent to ' + floodedPopulation.toLocaleString() + ' inhabitants, is affected by the flood.';
+}
+
+// Usage example
+var aoi = require('users/geraezemc/buildingbigdataapp:ge-aoi').aoi;
+var aoi_flooded = UI_functions.getFloodedInAoi(aoi, globals.cumulativeFlooded);
+exports.createPopulationChartAndLayers = createPopulationChartAndLayers
