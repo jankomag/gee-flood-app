@@ -256,7 +256,7 @@ function update_l2_summary_label(l2_name){
 
 // button to deep dive into sub-region
 var zoom_in_button = ui.Button({
-  label: "Zoom into sub-region",
+  label: "Zoom into district level",
   onClick: function(){
     // update flag
     zoom_flag = true;
